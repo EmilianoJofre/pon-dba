@@ -54,6 +54,9 @@ class HybridOLT:
         self.last_polling_time = 0.0  # Último momento en que se ejecutó polling
         self.next_polling_time = self.cycle_duration  # Próximo polling esperado
 
+        #77777777777777777777
+        self._last_transmitted_data = {onu_id: 0.0 for onu_id in self.onus.keys()}
+
         # Estadísticas
         self.stats = {
             'cycles_executed': 0,
@@ -70,6 +73,7 @@ class HybridOLT:
 
         print(f"  OLT: Polling automático cada {self.cycle_duration*1e6:.0f}us (sin eventos en cola)")
     
+
     def check_and_execute_polling(self, event_queue: EventQueue, current_time: float):
         """
         Verificar si es necesario ejecutar polling y ejecutarlo automáticamente
@@ -205,23 +209,37 @@ class HybridOLT:
         """
         if not reports:
             return {}
-        
+
+
+
         # Calcular demanda total agregada por ONU
         onu_demands = {}
+        df_requests = {}
         for onu_id, onu_report in reports.items():
             total_demand = sum(onu_report.values())
             if total_demand > 0:
                 onu_demands[onu_id] = total_demand / (1024 * 1024)  # Convertir a MB
-        
+            last_sent_size = self._last_transmitted_data.get(onu_id, 0.0)
+            df_requests[onu_id] = {
+                    "requested_bytes": total_demand,
+                    "sent_bytes": last_sent_size
+                }
+
         if not onu_demands:
             return {}
         
+        if self.dba_algorithm.get_algorithm_name() == "DF-DBA":
+            # El DF-DBA devuelve asignaciones en bytes
+            allocations_bytes = self.dba_algorithm.allocate_bandwidth(df_requests, self.channel_capacity)
+            # Convertir bytes a MB para el resto del proceso
+            allocations = {onu_id: b / (1024*1024) for onu_id, b in allocations_bytes.items()}
+        else:
         # Ejecutar DBA con demanda agregada
-        allocations = self.dba_algorithm.allocate_bandwidth(
-            onu_demands,
-            self.channel_capacity,
-            None  # Por ahora sin RL action
-        )
+            allocations = self.dba_algorithm.allocate_bandwidth(
+                onu_demands,
+                self.channel_capacity,
+                None  # Por ahora sin RL action
+            )
         
         # Convertir allocations en grants específicos por T-CONT
         grants = self._convert_allocations_to_grants(allocations, reports)
@@ -440,8 +458,10 @@ class HybridOLT:
         
         if transmitted_bytes > 0:
             self.stats['successful_transmissions'] += 1
+            self._last_transmitted_data[onu_id] = transmitted_bytes
         else:
             self.stats['failed_transmissions'] += 1
+            self._last_transmitted_data[onu_id] = 0.0
         
         # Calcular utilización del canal para este ciclo específico
         if self.current_cycle > 0:
@@ -500,6 +520,11 @@ class HybridOLT:
         self.slot_manager.reset()
         self.last_reports.clear()
         self.pending_grants.clear()
+
+        self._last_transmitted_data = {onu_id: 0.0 for onu_id in self.onus.keys()}
+
+        if self.dba_algorithm:
+            self.dba_algorithm.reset()
     
     def set_dba_algorithm(self, dba_algorithm: 'DBAAlgorithmInterface'):
         """Cambiar algoritmo DBA"""

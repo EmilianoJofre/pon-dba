@@ -975,6 +975,7 @@ class PONSimulator:
             self.cycle_metrics = []
             self.onu_metrics = {}
         
+
         elif self.simulation_mode == "events":
             self.event_queue.clear()
             self.events_processed = 0

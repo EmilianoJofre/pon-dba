@@ -13,6 +13,7 @@ try:
         PriorityDBAAlgorithm,
         RLDBAAlgorithm,
         StrictPriorityMinShareDBA,
+        DFDBAAlgorithm,
     )
     from ..smart_rl_dba import SmartRLDBAAlgorithm
     from ..simulation.pon_simulator import PONSimulator, EventEvaluator
@@ -31,6 +32,7 @@ except ImportError as e:
     RLDBAAlgorithm = None
     get_available_scenarios = lambda: []
     print_scenario_info = lambda x: None
+    DFDBAAlgorithm = None
 
 # RL Model Bridge no disponible - eliminado para independencia
 RL_MODEL_BRIDGE_AVAILABLE = False
@@ -43,6 +45,7 @@ class PONAdapter:
         # Core components
         self.orchestrator = None
         self.simulator = None
+
         
         # State management
         self.is_available = PON_CORE_AVAILABLE
@@ -318,8 +321,8 @@ class PONAdapter:
         """Ejecutar simulación (detecta automáticamente el tipo)"""
         if not self.simulator:
             return False, "No hay simulador inicializado"
-        
         try:
+
             if self.simulation_mode == "events":
                 return self.run_event_simulation(duration_seconds or 10.0, callback)
             elif self.simulation_mode == "cycles":
@@ -339,6 +342,7 @@ class PONAdapter:
                 return False, msg
         
         try:
+
             self._log_event("START", f"Iniciando simulación por eventos por {duration_seconds}s")
             
             # Crear callback wrapper si se proporciona
@@ -449,6 +453,7 @@ class PONAdapter:
             self.current_algorithm = algorithm_name
             self._log_event("DEBUG", f"Configurando algoritmo: {algorithm_name} (SDN: {self.use_sdn})")
             
+
             # Para simulador unificado
             if self.simulator and self.simulation_mode == "events":
                 dba_algorithm = self._get_dba_algorithm_by_name(algorithm_name)
@@ -506,6 +511,7 @@ class PONAdapter:
             "RL-DBA": RLDBAAlgorithm,
             "SDN": FCFSDBAAlgorithm,  # Usar FCFS como base para SDN
             "SP-MINSHARE": StrictPriorityMinShareDBA,
+            "DF-DBA": DFDBAAlgorithm,
         }
 
         if algorithm_name not in algorithms:
@@ -531,7 +537,7 @@ class PONAdapter:
     
     def get_available_algorithms(self):
         """Obtener lista de algoritmos DBA disponibles"""
-        algorithms = ["FCFS", "Priority", "RL-DBA", "SDN", "SP-MINSHARE"]
+        algorithms = ["FCFS", "Priority", "RL-DBA", "SDN", "SP-MINSHARE", "DF-DBA"]
 
         # Agregar Smart RL DBA si hay modelo cargado
         if self.smart_rl_algorithm:

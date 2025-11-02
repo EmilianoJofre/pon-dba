@@ -645,6 +645,10 @@ class OLT_SDN:
             'adjustment_intervals': [],
             'qos_violations': 0
         })
+
+
+        if self.dba_algorithm:
+            self.dba_algorithm.reset()
     
     def __str__(self) -> str:
         return f"OLT_SDN(id={self.id}, onus={len(self._onu_ids)}, algorithm={self.dba_algorithm.get_algorithm_name()})"

@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 from ..data.pon_request import Request
 from .pon_onu import ONU
 from ..connections.pon_link import Link
-from ..algorithms.pon_dba import DBAAlgorithmInterface, FCFSDBAAlgorithm
+from ..algorithms.pon_dba import DBAAlgorithmInterface, FCFSDBAAlgorithm, DFDBAAlgorithm
 
 # Importación diferida para evitar ciclos
 if TYPE_CHECKING:
@@ -53,6 +53,9 @@ class OLT:
         
         # Algoritmo DBA modular
         self.dba_algorithm = dba_algorithm or FCFSDBAAlgorithm()
+
+        # 77777777777777777777777777777777
+        self._last_transmitted_data = {onu_id: 0.0 for onu_id in self.onus.keys()}
         
         # Estado interno para algoritmos
         self._last_action = None
@@ -105,6 +108,7 @@ class OLT:
         # Convertir reports a formato de solicitud de ancho de banda
         onu_requests = {}
         available_requests = {}
+        df_requests = {}
         
         for onu_id, request_list in reports.items():
             if request_list:
@@ -114,17 +118,27 @@ class OLT:
                 # Calcular ancho de banda solicitado basado en el tráfico de la solicitud
                 bandwidth_requested = request.get_total_traffic()
                 onu_requests[onu_id] = bandwidth_requested
-        
+                last_sent_size = self._last_transmitted_data.get(onu_id, 0.0)
+                df_requests[onu_id] = {
+                        "requested_bytes": bandwidth_requested,
+                        "sent_bytes": last_sent_size
+                    }
+
+
         if not onu_requests:
             # Si no hay solicitudes, intentar generar una
             return self._get_nearest_request()
         
+        if self.dba_algorithm.get_algorithm_name() == "DF-DBA":     
+            allocations = self.dba_algorithm.allocate_bandwidth(df_requests, self.transmission_rate)
+
         # Ejecutar algoritmo DBA usando la interfaz
-        allocations = self.dba_algorithm.allocate_bandwidth(
-            onu_requests, 
-            self.transmission_rate,  # Corregido typo
-            self._last_action
-        )
+        else :
+            allocations = self.dba_algorithm.allocate_bandwidth(
+                onu_requests, 
+                self.transmission_rate,  # Corregido typo
+                self._last_action
+            )
         
         # Seleccionar solicitud basada en las asignaciones
         selected_request = self._select_request_from_allocations(
@@ -228,6 +242,9 @@ class OLT:
     def proccess(self, request: Request) -> tuple[bool, Request]:
         """Procesar una solicitud de transmisión"""
         try:
+            #777777777777777
+            total_traffic_to_send = request.get_total_traffic()
+            #####
             time_slot = self.compute_time_slot(request)
             next_clock = max(self.clock, request.created_at)
             self.fragmented_time = self.fragmented_time + (next_clock - self.clock)
@@ -245,9 +262,13 @@ class OLT:
                 # departure_time incluye el tiempo de transmisión
                 request.departure_time = self.clock
                 self.successful_transmissions += 1
+                #777777777777777777777777
+                self._last_transmitted_data[request.source_id] = total_traffic_to_send
             else:
                 # El evento no se pudo transmitir completamente
                 self.failed_transmissions += 1
+                #7777777
+                self._last_transmitted_data[request.source_id] = 0.0
             
             # Registrar último request procesado para callbacks RL
             self._last_processed_request = request
@@ -310,11 +331,16 @@ class OLT:
         self.failed_transmissions = 0
         self.clock = 0.0
         self.fragmented_time = 0.0
+
+        self._last_transmitted_data = {onu_id: 0.0 for onu_id in self.onus.keys()}
         
         # Reiniciar estadísticas de enlaces
         for link in self.links.values():
             link.reset_stats()
-    
+
+        if self.dba_algorithm:
+            self.dba_algorithm.reset()
+            
     def __str__(self) -> str:
         return f"OLT(id={self.id}, onus={len(self._onu_ids)}, algorithm={self.dba_algorithm.get_algorithm_name()})"
     

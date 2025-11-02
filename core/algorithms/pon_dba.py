@@ -6,6 +6,8 @@ Interfaces para algoritmos DBA modulares integradas de netPONPy
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from ..data.pon_request import Request
+import numpy as np
+from collections import deque
 
 
 class DBAAlgorithmInterface(ABC):
@@ -59,6 +61,12 @@ class DBAAlgorithmInterface(ABC):
             Nombre descriptivo del algoritmo
         """
         pass
+    def reset(self):
+        """
+        Reinicia el estado interno del algoritmo.
+        Esencial para limpiar el historial entre simulaciones.
+        """
+        pass # La implementación por defecto no hace nada.
 
 
 class FCFSDBAAlgorithm(DBAAlgorithmInterface):
@@ -343,3 +351,126 @@ class StrictPriorityMinShareDBA(DBAAlgorithmInterface):
     
     def get_algorithm_name(self) -> str:
         return "SP-MINSHARE"
+    
+
+class DFDBAAlgorithm(DBAAlgorithmInterface):
+    """
+    Algoritmo DBA basado en predicción de demanda (Demand Forecasting).
+    *** VERSIÓN FINAL OPTIMIZADA CON VECTORIZACIÓN Y CÁLCULO O(1) ***
+    """
+    
+    def __init__(self, buffer_size: int = 100, frame_time_s: float = 125e-6):
+        self.BUFFER_SIZE = buffer_size
+        self.FRAME_TIME_S = frame_time_s
+        self.SURPLUS_BYTES = 128
+        self.onu_stats = {}
+
+    def _initialize_onu_stats(self, onu_id: str):
+        """Inicializa la estructura de estadísticas para una nueva ONU."""
+        self.onu_stats[onu_id] = {
+            "req_buffer": deque(maxlen=self.BUFFER_SIZE),
+            "data_buffer": deque(maxlen=self.BUFFER_SIZE),
+            "value_history": deque(maxlen=self.BUFFER_SIZE),
+            "sum_x": 0.0,
+            "sum_x_sq": 0.0,
+            "mean": 0.0,
+            "std_dev": 0.0
+        }
+
+    def _update_stats_incrementally(self, onu_id: str, new_value: float):
+        """Actualiza la media y la desviación estándar en tiempo constante O(1)."""
+        stats = self.onu_stats[onu_id]
+        
+        if len(stats["value_history"]) == self.BUFFER_SIZE:
+            old_value = stats["value_history"][0]
+            stats["sum_x"] -= old_value
+            stats["sum_x_sq"] -= old_value**2
+            
+        stats["sum_x"] += new_value
+        stats["sum_x_sq"] += new_value**2
+        stats["value_history"].append(new_value)
+        
+        n = len(stats["value_history"])
+        if n > 0:
+            stats["mean"] = stats["sum_x"] / n
+            variance = (stats["sum_x_sq"] / n) - (stats["mean"]**2)
+            stats["std_dev"] = np.sqrt(max(0, variance))
+
+    def allocate_bandwidth(self, onu_requests: Dict[str, Dict[str, float]], 
+                          total_bandwidth: float, action: Any = None) -> Dict[str, float]:
+        
+        active_onus = list(onu_requests.keys())
+        if not active_onus:
+            return {}
+
+        means = []
+        std_devs = []
+        fallback_predictions = {}
+
+        # --- PASO 1: Actualizar estadísticas y recolectar medias/desviaciones ---
+        for onu_id in active_onus:
+            if onu_id not in self.onu_stats:
+                self._initialize_onu_stats(onu_id)
+            
+            stats = self.onu_stats[onu_id]
+            data = onu_requests[onu_id]
+            stats["req_buffer"].append(data["requested_bytes"])
+            stats["data_buffer"].append(data["sent_bytes"])
+            
+            if len(stats["req_buffer"]) > 1:
+                new_value = (stats["req_buffer"][-1] + 
+                             stats["data_buffer"][-1] - 
+                             stats["req_buffer"][-2])
+                self._update_stats_incrementally(onu_id, new_value)
+
+            # Si no hay suficiente historial, usar un valor de fallback
+            if len(stats["value_history"]) < 2:
+                fallback_predictions[onu_id] = data["requested_bytes"] + self.SURPLUS_BYTES
+                # Añadir placeholders para mantener la correspondencia de arrays
+                means.append(0) 
+                std_devs.append(0)
+            else:
+                means.append(stats["mean"])
+                std_devs.append(stats["std_dev"])
+
+        # --- PASO 2: Generar todas las predicciones a la vez (Vectorización) ---
+        # Convertir a arrays de NumPy para la operación vectorizada
+        means_arr = np.array(means)
+        std_devs_arr = np.array(std_devs)
+        
+        # Una única llamada para generar todas las predicciones
+        vectorized_predictions = np.random.normal(loc=means_arr, scale=std_devs_arr)
+
+        # --- PASO 3: Asignar las predicciones calculadas ---
+        allocations = {}
+        for i, onu_id in enumerate(active_onus):
+            if onu_id in fallback_predictions:
+                # Usar el valor de fallback para ONUs sin suficiente historial
+                predicted_bytes = fallback_predictions[onu_id]
+            else:
+                # Usar la predicción del array vectorizado
+                predicted_bytes = vectorized_predictions[i] + self.SURPLUS_BYTES
+            
+            allocations[onu_id] = max(0, predicted_bytes)
+            
+        return allocations
+
+    def get_algorithm_name(self) -> str:
+        return "DF-DBA"
+    
+
+
+
+    def reset(self):
+        """
+        Limpia el historial de estadísticas de todas las ONUs.
+        Este es el paso CRUCIAL para solucionar la lentitud.
+        """
+        # Mensaje para confirmar que se está ejecutando el reseteo
+        print("Reiniciando estado interno de DF-DBA...")
+        
+        # Limpiar el diccionario que almacena el estado de cada ONU
+        self.onu_stats.clear()
+        
+        # Una alternativa igualmente válida sería:
+        # self.onu_stats = {}
