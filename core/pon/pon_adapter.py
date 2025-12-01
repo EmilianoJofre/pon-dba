@@ -14,6 +14,7 @@ try:
         RLDBAAlgorithm,
         StrictPriorityMinShareDBA,
         DFDBAAlgorithm,
+        JDFDBAAlgorithm,
     )
     from ..smart_rl_dba import SmartRLDBAAlgorithm
     from ..simulation.pon_simulator import PONSimulator, EventEvaluator
@@ -33,6 +34,7 @@ except ImportError as e:
     get_available_scenarios = lambda: []
     print_scenario_info = lambda x: None
     DFDBAAlgorithm = None
+    JDFDBAAlgorithm = None
 
 # RL Model Bridge no disponible - eliminado para independencia
 RL_MODEL_BRIDGE_AVAILABLE = False
@@ -512,6 +514,7 @@ class PONAdapter:
             "SDN": FCFSDBAAlgorithm,  # Usar FCFS como base para SDN
             "SP-MINSHARE": StrictPriorityMinShareDBA,
             "DF-DBA": DFDBAAlgorithm,
+            "J-DF-DBA":JDFDBAAlgorithm,
         }
 
         if algorithm_name not in algorithms:
@@ -537,7 +540,7 @@ class PONAdapter:
     
     def get_available_algorithms(self):
         """Obtener lista de algoritmos DBA disponibles"""
-        algorithms = ["FCFS", "Priority", "RL-DBA", "SDN", "SP-MINSHARE", "DF-DBA"]
+        algorithms = ["FCFS", "Priority", "RL-DBA", "SDN", "SP-MINSHARE", "DF-DBA","J-DF-DBA"]
 
         # Agregar Smart RL DBA si hay modelo cargado
         if self.smart_rl_algorithm:

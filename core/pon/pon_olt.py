@@ -99,46 +99,35 @@ class OLT:
         
         # Verificar si el algoritmo DBA tiene el nuevo método select_next_request
         if hasattr(self.dba_algorithm, 'select_next_request'):
-            # Usar el nuevo método para mejores implementaciones de algoritmos
-            selected_request = self.dba_algorithm.select_next_request(reports, self.clock)
-            if selected_request:
-                return selected_request
+             selected_request = self.dba_algorithm.select_next_request(reports, self.clock)
+             if selected_request: return selected_request
         
-        # Fallback al método antiguo para compatibilidad (algoritmo RL)
-        # Convertir reports a formato de solicitud de ancho de banda
         onu_requests = {}
         available_requests = {}
-        df_requests = {}
         
         for onu_id, request_list in reports.items():
             if request_list:
-                # Tomar la primera solicitud de cada ONU
                 request = request_list[0]
                 available_requests[onu_id] = request
-                # Calcular ancho de banda solicitado basado en el tráfico de la solicitud
-                bandwidth_requested = request.get_total_traffic()
-                onu_requests[onu_id] = bandwidth_requested
-                last_sent_size = self._last_transmitted_data.get(onu_id, 0.0)
-                df_requests[onu_id] = {
-                        "requested_bytes": bandwidth_requested,
-                        "sent_bytes": last_sent_size
-                    }
-
-
+                
+                # ¡AQUÍ ESTÁ EL CAMBIO!
+                # Antes: onu_requests[onu_id] = request.get_total_traffic()
+                # Ahora: Pasamos el objeto COMPLETO
+                onu_requests[onu_id] = request 
+                
         if not onu_requests:
-            # Si no hay solicitudes, intentar generar una
             return self._get_nearest_request()
-        
-        if self.dba_algorithm.get_algorithm_name() == "DF-DBA":     
-            allocations = self.dba_algorithm.allocate_bandwidth(df_requests, self.transmission_rate)
 
-        # Ejecutar algoritmo DBA usando la interfaz
-        else :
-            allocations = self.dba_algorithm.allocate_bandwidth(
-                onu_requests, 
-                self.transmission_rate,  # Corregido typo
-                self._last_action
-            )
+        # --- LLAMADA UNIVERSAL ---
+        # Llamamos al DBA pasando:
+        # 1. onu_requests (Diccionario de OBJETOS Request, para ver T-CONTs)
+        # 2. last_transmitted (El buzón con Data[i], para la predicción)
+        allocations = self.dba_algorithm.allocate_bandwidth(
+            onu_requests, 
+            self.transmission_rate, 
+            action=self._last_action,
+            last_transmitted=self._last_transmitted_data # El buzón
+        )
         
         # Seleccionar solicitud basada en las asignaciones
         selected_request = self._select_request_from_allocations(

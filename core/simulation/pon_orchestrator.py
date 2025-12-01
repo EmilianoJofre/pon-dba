@@ -6,6 +6,7 @@ Orquestador PON integrado de netPONPy con interfaz mejorada para PonLab
 import numpy as np
 from typing import Dict, List, Any, Optional
 from enum import Enum
+import random  # <--- AGREGAR ESTO SI NO ESTÁ
 
 from ..algorithms.pon_dba import DBAAlgorithmInterface, FCFSDBAAlgorithm
 from ..pon.pon_olt import OLT
@@ -81,6 +82,11 @@ class PONOrchestrator:
         
         # Callback para logging detallado
         self.log_callback = None
+
+        FIXED_SEED = 42
+        np.random.seed(FIXED_SEED)
+        random.seed(FIXED_SEED)
+        print(f"SEMILLA FIJADA A {FIXED_SEED} EN INIT")
         
         # Inicializar componentes
         self._create_components()
@@ -211,6 +217,12 @@ class PONOrchestrator:
     
     def reset(self, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Reiniciar simulador al estado inicial preservando configuración DBA"""
+
+        FIXED_SEED = 42
+        np.random.seed(FIXED_SEED)
+        random.seed(FIXED_SEED)
+        print(f"SEMILLA FIJADA A {FIXED_SEED} PARA REPRODUCIBILIDAD")
+
         # Preservar configuración DBA actual
         current_dba_algorithm = self.dba_algorithm
         
@@ -355,7 +367,7 @@ class PONOrchestrator:
                     # Cálculo de throughput
                     traffic_mb = processed_request.get_total_traffic()
                     self.cumulative_transmitted += traffic_mb
-                    
+                    self.olt._last_transmitted_data[processed_request.source_id] = traffic_mb
                     # Acumulación de throughput
                     elapsed_time = self.olt.clock - self.episode_start_time
                     if elapsed_time > 0:
@@ -382,8 +394,10 @@ class PONOrchestrator:
                     break
                     
         except Exception as e:
-            # En caso de error, registrarlo y continuar
-            self._log_event("ERROR", f"Error durante timestep de simulación: {e}")
+            print(f"CRITICAL ERROR IN TIMESTEP: {e}") # Force print to console
+            import traceback
+            traceback.print_exc() # Print full error trace
+            self._log_event("ERROR", f"Error: {e}")
         
         return metrics
     

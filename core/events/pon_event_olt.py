@@ -212,37 +212,35 @@ class HybridOLT:
 
 
 
-        # Calcular demanda total agregada por ONU
-        onu_demands = {}
-        df_requests = {}
-        for onu_id, onu_report in reports.items():
-            total_demand = sum(onu_report.values())
-            if total_demand > 0:
-                onu_demands[onu_id] = total_demand / (1024 * 1024)  # Convertir a MB
-            last_sent_size = self._last_transmitted_data.get(onu_id, 0.0)
-            df_requests[onu_id] = {
-                    "requested_bytes": total_demand,
-                    "sent_bytes": last_sent_size
-                }
-
-        if not onu_demands:
-            return {}
+        # 1. Preparar Requests
+        # Pasamos el diccionario 'reports' DIRECTAMENTE. 
+        # La capa de compatibilidad en pon_dba.py ahora sabe sumar los diccionarios si es necesario (FCFS),
+        # o usarlos desagregados (J-DF-DBA).
         
-        if self.dba_algorithm.get_algorithm_name() == "DF-DBA":
-            # El DF-DBA devuelve asignaciones en bytes
-            allocations_bytes = self.dba_algorithm.allocate_bandwidth(df_requests, self.channel_capacity)
-            # Convertir bytes a MB para el resto del proceso
-            allocations = {onu_id: b / (1024*1024) for onu_id, b in allocations_bytes.items()}
-        else:
-        # Ejecutar DBA con demanda agregada
-            allocations = self.dba_algorithm.allocate_bandwidth(
-                onu_demands,
-                self.channel_capacity,
-                None  # Por ahora sin RL action
-            )
+        # 2. Ejecutar DBA
+        # IMPORTANTE: Pasamos 'last_transmitted' para que los algoritmos predictivos (DF-DBA)
+        # sepan cuánto enviaron realmente en el ciclo anterior y no predigan 0.
+        allocations_raw = self.dba_algorithm.allocate_bandwidth(
+            onu_requests=reports, 
+            total_bandwidth=self.channel_capacity,
+            last_transmitted=self._last_transmitted_data # <--- ESTA LÍNEA FALTABA Y CAUSABA EL ERROR
+        )
         
-        # Convertir allocations en grants específicos por T-CONT
-        grants = self._convert_allocations_to_grants(allocations, reports)
+        # 3. Normalizar Salida (Bytes vs MB)
+        # Algunos algoritmos devuelven Bytes (J-DF-DBA) y otros MB (FCFS).
+        # HybridOLT trabaja internamente distribuyendo MBs.
+        allocations_mb = {}
+        
+        for onu_id, val in allocations_raw.items():
+            # Heurística simple: Si el valor es muy grande (> 10000), asumimos que son Bytes
+            # y los convertimos a MB para que el resto de la lógica de HybridOLT funcione.
+            if val > 10000:
+                allocations_mb[onu_id] = val / (1024 * 1024)
+            else:
+                allocations_mb[onu_id] = val
+        
+        # 4. Convertir allocations en grants específicos por T-CONT
+        grants = self._convert_allocations_to_grants(allocations_mb, reports)
         
         self.stats['grants_assigned'] += len(grants)
         self.stats['total_grants_bytes'] += sum(
